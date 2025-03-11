@@ -9,8 +9,9 @@
 - **Initial PPM Calculation** from Chrony (if installed)
 - **Automatic Clock Drift Measurement** using `clock_gettime()`
 - **Thread-Safe Background PPM Updates**
-- **Fails Gracefully** if Chrony is not found
+- **Graceful Handling of Missing Chrony**
 - **Start and Stop Methods** to control background updates
+- **Status-Based API** for structured error handling
 
 ## Installation
 
@@ -22,10 +23,16 @@ sudo apt install chrony -y
 
 ## Compilation
 
-Compile the project with the following command (or use the `Makefile` included):
+Compile the project using the included `Makefile`:
 
 ```sh
-g++ -std=c++17 -o ppm_adjust main.cpp PPMManager.cpp -lpthread -latomic
+make
+```
+
+Or manually compile with:
+
+```sh
+g++ -std=c++17 -o ppm_manager main.cpp ppm_manager.cpp -lpthread -latomic
 ```
 
 ## Usage
@@ -33,17 +40,23 @@ g++ -std=c++17 -o ppm_adjust main.cpp PPMManager.cpp -lpthread -latomic
 ### Basic Example
 
 ```cpp
-#include "PPMManager.hpp"
+#include "ppm_manager.hpp"
 #include <iostream>
 
 int main()
 {
     PPMManager ppmManager;
-    ppmManager.start();
+    PPMStatus status = ppmManager.initialize();
 
-    std::cout << "Current PPM: " << ppmManager.getPPM() << std::endl;
+    if (status != PPMStatus::SUCCESS) {
+        std::cerr << "Error: PPM Manager initialization failed." << std::endl;
+        return 1;
+    }
 
-    // Run for a while...
+    ppmManager.startPPMUpdateLoop();
+    
+    std::cout << "Current PPM: " << ppmManager.getCurrentPPM() << std::endl;
+
     std::this_thread::sleep_for(std::chrono::minutes(10));
 
     ppmManager.stop();
@@ -59,19 +72,27 @@ int main()
 
 | Method | Description |
 |--------|-------------|
-| `PPMManager()` | Constructor, initializes PPM detection. |
-| `void start()` | Starts the background PPM update thread. |
-| `void stop()` | Stops the background PPM update thread. |
-| `double getPPM() const` | Returns the current PPM value. |
+| `PPMManager()` | Constructor, initializes internal values but does not start updates. |
+| `PPMStatus initialize()` | Initializes PPMManager, checking Chrony and clock drift. |
+| `PPMStatus startPPMUpdateLoop(int interval_seconds = 600)` | Starts the background PPM update thread. |
+| `PPMStatus stop()` | Stops the background PPM update thread. |
+| `double getCurrentPPM()` | Returns the current PPM value. |
+| `bool isTimeSynchronized()` | Checks if the system time is synchronized. |
 
 ## Troubleshooting
 
-### Q: I get an error: `Warning: Chrony not found.`
+### Q: I get an error: `Error: PPM Manager initialization failed.`
 
 Make sure **Chrony** is installed:
 
 ```sh
 sudo apt install chrony -y
+```
+
+Or verify that your system clock is synchronized:
+
+```sh
+timedatectl status
 ```
 
 ### Q: How do I stop the background thread?

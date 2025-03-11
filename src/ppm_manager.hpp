@@ -1,9 +1,30 @@
+/**
+ * @file ppm_manager.hpp
+ * @brief Header file for the PPMManager class.
+ *
+ * This file defines the PPMManager class, which manages periodic PPM (Parts Per Million)
+ * calculations to track clock drift. It retrieves PPM values from Chrony (if available)
+ * and periodically updates them using system timing functions.
+ */
+
 #ifndef PPM_MANAGER_HPP
 #define PPM_MANAGER_HPP
 
 #include <atomic>
 #include <mutex>
 #include <thread>
+
+/**
+ * @enum PPMStatus
+ * @brief Defines possible return statuses for PPMManager operations.
+ */
+enum class PPMStatus
+{
+    SUCCESS,                  ///< Operation completed successfully.
+    WARNING_HIGH_PPM,         ///< Measured PPM exceeds a safe threshold.
+    ERROR_CHRONY_NOT_FOUND,   ///< Chrony was not found, falling back to clock drift measurement.
+    ERROR_UNSYNCHRONIZED_TIME ///< System time is not synchronized.
+};
 
 /**
  * @class PPMManager
@@ -18,7 +39,7 @@ public:
     /**
      * @brief Constructs a PPMManager instance.
      *
-     * Initializes the PPM tracking system but does not start the update loop.
+     * Initializes internal values but does not start the update loop.
      */
     PPMManager();
 
@@ -30,26 +51,35 @@ public:
     ~PPMManager();
 
     /**
+     * @brief Initializes the PPMManager by checking synchronization and obtaining initial PPM.
+     *
+     * @return A PPMStatus indicating success or failure reason.
+     */
+    PPMStatus initialize();
+
+    /**
      * @brief Starts the PPM update loop.
      *
-     * This function launches a background thread that periodically updates the PPM value
-     * by measuring clock drift. The update interval is configurable.
+     * Runs in a background thread and periodically updates the PPM value.
      *
      * @param interval_seconds The interval in seconds between PPM updates (default: 600s).
+     * @return A PPMStatus indicating whether the loop started successfully.
      */
-    void startPPMUpdateLoop(int interval_seconds = 600);
+    PPMStatus startPPMUpdateLoop(int interval_seconds = 600);
 
     /**
      * @brief Stops the PPM update loop.
      *
-     * Terminates the background thread safely.
+     * Ensures the background thread terminates properly before stopping.
+     *
+     * @return A PPMStatus indicating whether the loop stopped successfully.
      */
-    void stop();
+    PPMStatus stop();
 
     /**
      * @brief Retrieves the latest calculated PPM value.
      *
-     * This function provides a thread-safe way to get the most recent PPM measurement.
+     * Ensures thread-safe access to the PPM value.
      *
      * @return The current PPM value.
      */
@@ -58,22 +88,20 @@ public:
     /**
      * @brief Checks whether the system time is synchronized.
      *
-     * This function determines if the system clock is synchronized with an external time source.
+     * Uses system utilities to determine if the clock is synchronized.
      *
      * @return True if time is synchronized, false otherwise.
      */
     bool isTimeSynchronized();
 
 private:
-    std::atomic<double> ppm_value;   ///< Stores the current PPM value.
-    std::mutex ppm_mutex;            ///< Ensures thread-safe access to the PPM value.
-    std::atomic<bool> running;       ///< Indicates whether the update loop is running.
-    std::thread ppm_thread;          ///< Background thread for PPM updates.
+    std::atomic<double> ppm_value; ///< Stores the current PPM value.
+    std::mutex ppm_mutex;          ///< Ensures thread-safe access to the PPM value.
+    std::atomic<bool> running;     ///< Indicates whether the update loop is running.
+    std::thread ppm_thread;        ///< Background thread for PPM updates.
 
     /**
      * @brief Retrieves the initial PPM value from Chrony.
-     *
-     * If Chrony is unavailable, it returns a fallback value.
      *
      * @return The PPM value from Chrony, or a fallback value on failure.
      */
@@ -82,7 +110,8 @@ private:
     /**
      * @brief Measures clock drift over a specified duration.
      *
-     * This function calculates how much the system clock drifts over a given number of seconds.
+     * Uses system time functions to measure how much the clock drifts
+     * over a given duration and calculates PPM deviation.
      *
      * @param seconds The duration in seconds to measure clock drift (default: 300s).
      * @return The calculated PPM drift value.
@@ -92,11 +121,12 @@ private:
     /**
      * @brief The internal update loop for recalculating PPM.
      *
-     * Runs in a background thread, periodically updating the PPM value.
+     * Runs in a background thread and periodically updates the PPM value.
      *
      * @param interval_seconds The interval in seconds between PPM updates.
+     * @return A PPMStatus indicating success or a warning if an anomaly is detected.
      */
-    void ppmUpdateLoop(int interval_seconds);
+    PPMStatus ppmUpdateLoop(int interval_seconds);
 };
 
 #endif // PPM_MANAGER_HPP
