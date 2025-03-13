@@ -2,9 +2,17 @@
  * @file ppm_manager.hpp
  * @brief Header file for the PPMManager class.
  *
- * This file defines the PPMManager class, which manages periodic PPM (Parts Per Million)
- * calculations to track clock drift. It retrieves PPM values from Chrony (if available)
- * and periodically updates them using system timing functions.
+ * This file declares the PPMManager class, which manages periodic PPM (Parts
+ * Per Million) calculations to track clock drift. 1 PPM = 1 microsecond of
+ * drift every second.
+ *
+ * It retrieves PPM values from Chrony (if available) and periodically updates
+ * them using system timing functions.
+ *
+ * This software is distributed under the MIT License. See LICENSE.md for
+ * details.
+ *
+ * Copyright (C) 2025 Lee C. Bussy (@LBussy). All rights reserved.
  */
 
 #ifndef PPM_MANAGER_HPP

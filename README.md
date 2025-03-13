@@ -54,7 +54,7 @@ int main()
     }
 
     ppmManager.startPPMUpdateLoop();
-    
+
     std::cout << "Current PPM: " << ppmManager.getCurrentPPM() << std::endl;
 
     std::this_thread::sleep_for(std::chrono::minutes(10));
