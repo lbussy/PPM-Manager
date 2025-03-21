@@ -1,39 +1,29 @@
-# Extract project details from Git
+# Makefile for building most C++ or C++ and C projects
+
+# C++ Version
+CXXVER := 17
+# Prefix for tests, "sudo" if required
+SUDO := #sudo
+# Debug tag
+#DEBUG := -DDEBUG_PPMMANAGER
+
+# Get project name from Git
 #
 # Project name from remote origin URL (fallback to 'unknown' if not available)
-PRJ := $(shell git config --local remote.origin.url 2>/dev/null | sed -n 's#.*/\([^.]*\)\.git#\1#p' || echo "unknown")
-# Current Git branch (sanitize non-alphanumeric characters to '-')
-BRH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null | sed -E 's/[^a-zA-Z0-9]/-/g' || echo "unknown")
-# Latest Git tag (version) without leading 'v'
-VER := $(shell git describe --tags --match "v[0-9]*" --match "[0-9]*" --abbrev=0 2>/dev/null | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+)/\1/' || echo "0.0.0")
-# Append branch name if not on 'main' or 'master'
-PRE := $(shell if [ "$(BRH)" != "main" ] && [ "$(BRH)" != "master" ]; then echo "-$(BRH)"; fi)
-# Append branch name to version only if not already suffixed
-VER := $(VER)$(PRE)
-# Append commit hash if current commit is not an exact tag
-COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-VER := $(shell if ! git describe --tags --exact-match >/dev/null 2>&1; then echo "$(VER)+$(COMMIT)"; else echo "$(VER)"; fi)
-# Lower-case based executable name
+PRJ := $(shell git config --local remote.origin.url 2>/dev/null | sed -n 's#.*/\([^.]*\)\.git#\1#p')
+# If PRJ is empty, fallback to current directory name
+PRJ := $(or $(PRJ),$(shell basename $$(pwd)))
+# If PRJ is "src", use the parent directory name
+PRJ := $(shell [ "$(PRJ)" = "src" ] && basename $$(dirname $$(pwd)) || echo "$(PRJ)")
+# Convert PRJ to lowercase for EXE_NAME
 EXE_NAME := $(shell echo $(PRJ) | tr '[:upper:]' '[:lower:]')
 
 # Output Items
-OUT := $(EXE_NAME)						# Normal release binary
-TEST_OUT :=	$(EXE_NAME)_test			# Debug/test binary
-INSTALL_PATH := /usr/local				# Installation directory for the binary
-INI_PATH :=	/usr/local/etc/wsprrypi.ini	# INI file for test target
-CALL_SIGN := AA0NT						# Callsign
-GRID_SQUARE := EM18						# Maidenhead Grid Square
-TX_POWER := 20							# Transmit Power in dBm
-TEST_FREQ := 7040100					# Frequency for test tone
+OUT := $(EXE_NAME)					# Normal release binary
+TEST_OUT :=	$(EXE_NAME)_test		# Debug/test binary
 # Strip whitespace from comments
 OUT := $(strip $(OUT))
 TEST_OUT := $(strip $(TEST_OUT))
-INSTALL_PATH := $(strip $(INSTALL_PATH))
-INI_PATH := $(strip $(INI_PATH))
-CALL_SIGN := $(strip $(CALL_SIGN))
-TX_POWER := $(strip $(TX_POWER))
-GRID_SQUARE := $(strip $(GRID_SQUARE))
-TEST_FREQ := $(strip $(TEST_FREQ))
 
 # Output directories
 OBJ_DIR_RELEASE = build/obj/release
@@ -42,11 +32,19 @@ DEP_DIR         = build/dep
 BIN_DIR		 	= build/bin
 
 # Collect source files
+C_SOURCES   := $(shell find . -name "*.c")
 CPP_SOURCES := $(shell find . -name "*.cpp" ! -path "./*/main.cpp")
+
 # Collect object files
+C_OBJECTS   := $(patsubst %.c,$(OBJ_DIR_RELEASE)/%.o,$(C_SOURCES))
 CPP_OBJECTS := $(patsubst %.cpp,$(OBJ_DIR_RELEASE)/%.o,$(CPP_SOURCES))
+
 # Linker Flags
-LDFLAGS := -lpthread -latomic
+LDFLAGS := -lpthread  -latomic
+# Get packages for linker from PKG_CONFIG_PATH
+# LDFLAGS += $(shell pkg-config --cflags --libs libgpiod)
+# LDFLAGS += $(shell pkg-config --libs libgpiodcxx)
+
 # Collect dependency files
 DEPFILES := $(wildcard $(DEP_DIR)/**/*.d)
 # Include dependencies if they exist
@@ -54,6 +52,7 @@ DEPFILES := $(wildcard $(DEP_DIR)/**/*.d)
 
 # Compiler Executables
 CXX = g++
+CC = gcc
 
 # Allow threading using all available processors
 MAKEFLAGS := -j$(nproc)
@@ -63,19 +62,30 @@ MAKEFLAGS := -j$(nproc)
 # Common flags for both C and C++ compilers
 COMMON_FLAGS := -Wall -Werror -fmax-errors=10 -MMD -MP
 
-# Include paths for libraries
-# CXXFLAGS += -I$(abspath ./INI-Handler/src)
-# CXXFLAGS += -I$(abspath ./LCBLog/src)
-# CXXFLAGS += -I$(abspath ./MonitorFile/src)
-# CXXFLAGS += -I$(abspath ./WSPR-Message/src)
-# CXXFLAGS += -I$(abspath ./Singleton/src)
-# CXXFLAGS += -I$(abspath ./Broadcom-Mailbox/src)
+# C Flags
+CFLAGS := $(COMMON_FLAGS)
+# C Debug Flags
+C_DEBUG_FLAGS := $(CFLAGS) -g -DDEBUG_PPMMANAGER	# Debug flags
+# C Release Flags
+C_RELEASE_FLAGS := $(CFLAGS) -O2					# Release optimized
 
-# Target flags
-CXX_RELEASE_FLAGS := $(COMMON_FLAGS) $(CXXFLAGS) -O2			# Release optimized
-CXX_DEBUG_FLAGS := $(COMMON_FLAGS) $(CXXFLAGS) -g -DDEBUG_BUILD	# Debug flags
+# C++ Flags
+CXXFLAGS := -Wno-psabi -lstdc++fs -std=c++$(CXXVER)
+CXXFLAGS += $(COMMON_FLAGS) $(COMM_CXX_FLAGS)
+# C++ Debug Flags
+CXX_DEBUG_FLAGS := $(CXXFLAGS) -g $(DEBUG)	# Debug flags
+# C++ Release Flags
+CXX_RELEASE_FLAGS := $(CXXFLAGS) -O2		# Release optimized
+
+# Include paths for libraries
+# CXXFLAGS += -I$(abspath ./{folder}/src)
+
+# Define additional macros for the compiler
+# CXXFLAGS += -DXXX
 
 # Strip whitespaces
+C_DEBUG_FLAGS := $(strip $(C_DEBUG_FLAGS))
+C_RELEASE_FLAGS := $(strip $(C_RELEASE_FLAGS))
 CXX_DEBUG_FLAGS := $(strip $(CXX_DEBUG_FLAGS))
 CXX_RELEASE_FLAGS := $(strip $(CXX_RELEASE_FLAGS))
 
@@ -91,6 +101,13 @@ endif
 # Compile and Link
 ##
 
+# Compile C source files for debug
+$(OBJ_DIR_DEBUG)/%.o: %.c
+	$(Q)mkdir -p $(dir $@)
+	$(Q)mkdir -p $(DEP_DIR)/$(dir $<)
+	$(Q)echo "Compiling (debug) $< into $@"
+	$(Q)$(CC) $(C_DEBUG_FLAGS) -MF $(DEP_DIR)/$*.d -c $< -o $@
+
 # Compile C++ source files for debug
 $(OBJ_DIR_DEBUG)/%.o: %.cpp
 	$(Q)mkdir -p $(dir $@)
@@ -99,9 +116,9 @@ $(OBJ_DIR_DEBUG)/%.o: %.cpp
 	$(Q)$(CXX) $(CXX_DEBUG_FLAGS) -MF $(DEP_DIR)/$*.d -c $< -o $@
 
 # Link the debug binary
-build/bin/$(TEST_OUT): $(patsubst %.cpp,$(OBJ_DIR_DEBUG)/%.o,$(CPP_SOURCES))
+build/bin/$(TEST_OUT): $(patsubst %.cpp,$(OBJ_DIR_DEBUG)/%.o,$(CPP_SOURCES)) $(patsubst %.c,$(OBJ_DIR_DEBUG)/%.o,$(C_SOURCES))
 	$(Q)mkdir -p $(BIN_DIR)
-	$(Q)echo "Linking debug: $(TEST_OUT)"
+	$(Q)echo "Linking debug binary: $(TEST_OUT)"
 	$(Q)$(CXX) $(CXX_DEBUG_FLAGS) $^ -o build/bin/$(TEST_OUT) $(LDFLAGS)
 
 # Compile C++ source files (release)
@@ -111,8 +128,15 @@ $(OBJ_DIR_RELEASE)/%.o: %.cpp
 	$(Q)echo "Compiling (release) $< into $@"
 	$(Q)$(CXX) $(CXX_RELEASE_FLAGS) -MF $(DEP_DIR)/$*.d -c $< -o $@
 
+# Compile C source files (release)
+$(OBJ_DIR_RELEASE)/%.o: %.c
+	$(Q)mkdir -p $(dir $@)
+	$(Q)mkdir -p $(DEP_DIR)/$(dir $<)
+	$(Q)echo "Compiling (release) $< into $@"
+	$(Q)$(CC) $(C_RELEASE_FLAGS) -MF $(DEP_DIR)/$*.d -c $< -o $@
+
 # Link the final binary (release)
-build/bin/$(OUT): $(CPP_OBJECTS)
+build/bin/$(OUT): $(C_OBJECTS) $(CPP_OBJECTS)
 	$(Q)mkdir -p $(BIN_DIR)
 	$(Q)echo "Linking release binary: $(OUT)"
 	$(Q)$(CXX) $(CXX_RELEASE_FLAGS) $^ -o $@ $(LDFLAGS)
@@ -140,11 +164,15 @@ release: build/bin/$(OUT)
 debug: build/bin/$(TEST_OUT)
 	$(Q)echo "Debug build completed successfully."
 
-# Test with INI target
+# Test target
 .PHONY: test
 test: debug
-	$(Q)echo "Running PPM demo."
-	$(Q)./build/bin/$(TEST_OUT)
+	$(Q)if [ "$(SUDO)" = "sudo" ]; then \
+        echo "Running test with sudo privileges."; \
+    else \
+        echo "Running test with user privileges."; \
+    fi
+	$(Q)$(SUDO) ./build/bin/$(TEST_OUT)
 
 # Show only user-defined macros
 .PHONY: macros
@@ -155,18 +183,22 @@ macros:
 # Lint target
 .PHONY: lint
 lint:
+	$(Q)if ! command -v cppcheck >/dev/null 2>&1; then \
+	    echo "Warning: cppcheck is not installed. Please install it to run static analysis."; \
+	    exit 1; \
+	fi
 	$(Q)echo "Running static analysis with cppcheck."
-	$(Q)cppcheck --platform=unix32 --std=c++17 --enable=all --inconclusive --force --inline-suppr --quiet $(CPP_SOURCES)
+	$(Q)cppcheck --platform=unix32 --std=c++$(CXXVER) --enable=all --inconclusive --force --inline-suppr --quiet $(CPP_SOURCES)
 
 # Display available make targets
 .PHONY: help
 help:
 	$(Q)echo "Available targets:"
-	$(Q)echo "  all        Build the project (default: release)."
-	$(Q)echo "  clean      Remove build artifacts."
-	$(Q)echo "  debug      Build with debugging symbols."
-	$(Q)echo "  test       Run a test monitoring PPM."
-	$(Q)echo "  lint       Run static analysis."
-	$(Q)echo "  macros     Show defined project macros."
-	$(Q)echo "  release    Build optimized for production."
-	$(Q)echo "  help       Show this help message."
+	$(Q)echo "  all          Build the project (default: release)."
+	$(Q)echo "  clean        Remove build artifacts."
+	$(Q)echo "  test         Run the binary with the INI file."
+	$(Q)echo "  lint         Run static analysis."
+	$(Q)echo "  macros       Show defined project macros."
+	$(Q)echo "  debug        Build with debugging symbols."
+	$(Q)echo "  release      Build optimized for production."
+	$(Q)echo "  help         Show this help message."

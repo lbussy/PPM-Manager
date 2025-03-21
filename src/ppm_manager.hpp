@@ -2,6 +2,8 @@
  * @file ppm_manager.hpp
  * @brief Header file for the PPMManager class.
  *
+ * Copyright (C) 2025 Lee C. Bussy (@LBussy). All rights reserved.
+ *
  * This file declares the PPMManager class, which manages periodic PPM (Parts
  * Per Million) calculations to track clock drift. 1 PPM = 1 microsecond of
  * drift every second.
@@ -11,15 +13,16 @@
  *
  * This software is distributed under the MIT License. See LICENSE.md for
  * details.
- *
- * Copyright (C) 2025 Lee C. Bussy (@LBussy). All rights reserved.
  */
 
 #ifndef PPM_MANAGER_HPP
 #define PPM_MANAGER_HPP
 
 #include <atomic>
+#include <deque>
+#include <functional>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 /**
@@ -70,10 +73,10 @@ public:
      *
      * Runs in a background thread and periodically updates the PPM value.
      *
-     * @param interval_seconds The interval in seconds between PPM updates (default: 600s).
+     * @param interval_seconds The interval in seconds between PPM updates.
      * @return A PPMStatus indicating whether the loop started successfully.
      */
-    PPMStatus startPPMUpdateLoop(int interval_seconds = 600);
+    PPMStatus startPPMUpdateLoop(int interval_seconds = ppm_update_interval);
 
     /**
      * @brief Stops the PPM update loop.
@@ -102,18 +105,42 @@ public:
      */
     bool isTimeSynchronized();
 
+    /**
+     * @brief Registers a callback to be invoked when the PPM value changes.
+     *
+     * The callback function receives the new PPM value.
+     *
+     * @param callback A function or lambda that takes a double PPM value.
+     */
+    void setPPMCallback(std::function<void(double)> callback);
+
 private:
-    std::atomic<double> ppm_value; ///< Stores the current PPM value.
-    std::mutex ppm_mutex;          ///< Ensures thread-safe access to the PPM value.
-    std::atomic<bool> running;     ///< Indicates whether the update loop is running.
-    std::thread ppm_thread;        ///< Background thread for PPM updates.
+    std::atomic<double> ppm_value;                   ///< Stores the current PPM value.
+    std::mutex ppm_mutex;                            ///< Ensures thread-safe access to the PPM value.
+    std::atomic<bool> running;                       ///< Indicates whether the update loop is running.
+    std::thread ppm_thread;                          ///< Background thread for PPM updates.
+    std::function<void(double)> ppm_callback;        ///< Callback function for PPM updates
+    static constexpr int clock_drift_interval = 300; ///< Internval in seconds for measureClockDrift()
+    static constexpr int ppm_update_interval = 300;  ///< Internval in seconds for startPPMUpdateLoop()
+
+    // PPM Source Weighting: These need not add up to 100, they will be normalized to % of 100
+    double chrony_weight = 75;   ///< Weight given to chrony values when operating in mixed mode
+    double measured_weight = 25; ///< Weight given to measured values when operating in mixed mode
+
+    std::deque<double> ppm_history;
+    static constexpr size_t max_history_size = 10;
+
+    double calculateSmoothingFactor(double last_n_variance, double chrony_update_interval);
+    double getDriftVariance();
+    std::optional<double> getChronyUpdateInterval();
+    double adjustChronyWeight(double chrony_update_interval);
 
     /**
      * @brief Retrieves the initial PPM value from Chrony.
      *
      * @return The PPM value from Chrony, or a fallback value on failure.
      */
-    double getChronyPPM();
+    std::optional<double> getChronyPPM();
 
     /**
      * @brief Measures clock drift over a specified duration.
@@ -121,10 +148,10 @@ private:
      * Uses system time functions to measure how much the clock drifts
      * over a given duration and calculates PPM deviation.
      *
-     * @param seconds The duration in seconds to measure clock drift (default: 300s).
+     * @param seconds The duration in seconds to measure clock drift.
      * @return The calculated PPM drift value.
      */
-    double measureClockDrift(int seconds = 300);
+    double measureClockDrift(int seconds = clock_drift_interval);
 
     /**
      * @brief The internal update loop for recalculating PPM.

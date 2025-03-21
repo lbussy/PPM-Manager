@@ -3,6 +3,7 @@
 *.log
 *.bak
 ./src/build/
+.vscode
 
 # Ignore all files without extensions in src/
 src/[^/]*[^.][^/]*$
@@ -12,12 +13,6 @@ src/[^/]*[^.][^/]*$
 
 # Allow all directories inside src/ (this is crucial)
 !src/**/
-
-# Explicitly allow submodules
-!src/LCBLog/
-!src/LCBLog/**/*
-!src/INI-Handler/
-!src/INI-Handler/**/*
 
 # Ignore all other files inside src/, but not directories
 src/*/*
