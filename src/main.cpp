@@ -106,9 +106,6 @@ int main()
     std::cout << "[" << std::put_time(&local_time, "%Y-%m-%d %H:%M:%S") << "] "
               << "Current PPM: " << ppmManager.getCurrentPPM() << std::endl;
 
-    // Start PPM update loop
-    ppmManager.startPPMUpdateLoop();
-
     std::vector<std::thread> workers;
     const int num_workers = 4;
 

@@ -69,16 +69,6 @@ public:
     PPMStatus initialize();
 
     /**
-     * @brief Starts the PPM update loop.
-     *
-     * Runs in a background thread and periodically updates the PPM value.
-     *
-     * @param interval_seconds The interval in seconds between PPM updates.
-     * @return A PPMStatus indicating whether the loop started successfully.
-     */
-    PPMStatus startPPMUpdateLoop(int interval_seconds = ppm_update_interval);
-
-    /**
      * @brief Stops the PPM update loop.
      *
      * Ensures the background thread terminates properly before stopping.
@@ -122,6 +112,7 @@ private:
     std::function<void(double)> ppm_callback;        ///< Callback function for PPM updates
     static constexpr int clock_drift_interval = 300; ///< Internval in seconds for measureClockDrift()
     static constexpr int ppm_update_interval = 300;  ///< Internval in seconds for startPPMUpdateLoop()
+    static constexpr int ppm_loop_priority = 10;     ///< Default scheduling priority
 
     // PPM Source Weighting: These need not add up to 100, they will be normalized to % of 100
     double chrony_weight = 75;   ///< Weight given to chrony values when operating in mixed mode
@@ -154,11 +145,21 @@ private:
     double measureClockDrift(int seconds = clock_drift_interval);
 
     /**
+     * @brief Starts the PPM update loop in a background thread.
+     *
+     * Ensures that only one instance of the loop runs at a time.
+     *
+     * @param interval_seconds The interval in seconds between PPM updates.
+     */
+    PPMStatus startPPMUpdateLoop();
+
+    /**
      * @brief The internal update loop for recalculating PPM.
      *
      * Runs in a background thread and periodically updates the PPM value.
      *
      * @param interval_seconds The interval in seconds between PPM updates.
+     * @param priority The scheduling priority for the thread.
      * @return A PPMStatus indicating success or a warning if an anomaly is detected.
      */
     PPMStatus ppmUpdateLoop(int interval_seconds);

@@ -70,6 +70,9 @@ PPMStatus PPMManager::initialize()
     // Safely extract the Chrony PPM value
     ppm_value = *chrony_ppm_opt;
 
+    // Start the loop
+    startPPMUpdateLoop();
+
     return PPMStatus::SUCCESS;
 }
 
@@ -373,17 +376,32 @@ double PPMManager::adjustChronyWeight(double chrony_update_interval)
  * @brief Starts the PPM update loop in a background thread.
  *
  * Ensures that only one instance of the loop runs at a time.
- *
- * @param interval_seconds The interval in seconds between PPM updates.
  */
-PPMStatus PPMManager::startPPMUpdateLoop(int interval_seconds)
+PPMStatus PPMManager::startPPMUpdateLoop()
 {
     if (running)
     {
         return PPMStatus::SUCCESS;
     }
     running = true;
-    ppm_thread = std::thread(&PPMManager::ppmUpdateLoop, this, interval_seconds);
+    ppm_thread = std::thread(&PPMManager::ppmUpdateLoop, this, ppm_update_interval);
+
+    // Define the desired scheduling policy and use the provided priority.
+    int policy = SCHED_RR; // Round-robin scheduling; alternatives include SCHED_FIFO
+    sched_param sch_params;
+    sch_params.sched_priority = ppm_loop_priority; // Use the optional parameter (defaults to 10)
+
+    // Set the thread's scheduling policy and priority.
+    int ret = pthread_setschedparam(ppm_thread.native_handle(), policy, &sch_params);
+
+    if (ret != 0)
+    {
+#ifdef DEBUG_PPMMANAGER
+        std::cerr << "Failed to set thread priority: " << std::strerror(ret) << std::endl;
+#endif
+        ;;
+    }
+
     return PPMStatus::SUCCESS;
 }
 
