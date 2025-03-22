@@ -90,6 +90,7 @@ int main()
     {
         std::cerr << "Chrony not found. Using clock drift measurement." << std::endl;
     }
+    ppmManager.setPriority(SCHED_RR, 10);
 
     // Register a callback function
     ppmManager.setPPMCallback([](double ppm) {
