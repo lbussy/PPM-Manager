@@ -92,11 +92,7 @@ public:
      * @param priority The thread priority value to assign (depends on policy).
      *
      * @return `true` if the scheduling parameters were successfully applied,
-     *         `false` otherwise (e.g., thread not running or `pthread_setschedparam()` failed).
-     *
-     * @note
-     * The caller may require elevated privileges (e.g., CAP_SYS_NICE) to apply real-time priorities.
-     * It is the caller's responsibility to ensure the priority value is valid for the given policy.
+     *         `false` otherwise.
      */
     bool setPriority(int schedPolicy, int priority);
 
@@ -128,33 +124,25 @@ public:
     void setPPMCallback(std::function<void(double)> callback);
 
 private:
-    std::atomic<double> ppm_value;                   ///< Stores the current PPM value.
-    std::mutex ppm_mutex;                            ///< Ensures thread-safe access to the PPM value.
-    std::atomic<bool> running;                       ///< Indicates whether the update loop is running.
-    std::thread ppm_thread;                          ///< Background thread for PPM updates.
-    std::function<void(double)> ppm_callback;        ///< Callback function for PPM updates
-    static constexpr int clock_drift_interval = 300; ///< Internval in seconds for measureClockDrift()
-    static constexpr int ppm_update_interval = 300;  ///< Internval in seconds for startPPMUpdateLoop()
-    static constexpr int ppm_loop_priority = 10;     ///< Default scheduling priority
+    std::atomic<double> ppm_value_;            ///< Stores the current PPM value.
+    std::mutex ppm_mutex_;                     ///< Ensures thread-safe access to the PPM value.
+    std::atomic<bool> running_;                ///< Indicates whether the update loop is running.
+    std::thread ppm_thread_;                   ///< Background thread for PPM updates.
+    std::function<void(double)> ppm_callback_; ///< Callback function for PPM updates.
 
-    // PPM Source Weighting: These need not add up to 100, they will be normalized to % of 100
-    double chrony_weight = 75;   ///< Weight given to chrony values when operating in mixed mode
-    double measured_weight = 25; ///< Weight given to measured values when operating in mixed mode
+    static constexpr int clock_drift_interval_ = 300; ///< Interval in seconds for measuring clock drift.
+    static constexpr int ppm_update_interval_ = 120;  ///< Interval in seconds between PPM updates.
+    static constexpr int ppm_loop_priority_ = 10;     ///< Default scheduling priority.
 
-    std::deque<double> ppm_history;
-    static constexpr size_t max_history_size = 10;
-
-    double calculateSmoothingFactor(double last_n_variance, double chrony_update_interval);
-    double getDriftVariance();
-    std::optional<double> getChronyUpdateInterval();
-    double adjustChronyWeight(double chrony_update_interval);
+    std::deque<double> ppm_history_;                ///< Queue to hold historical PPM values.
+    static constexpr size_t max_history_size_ = 10; ///< Max size of ppm_history_.
 
     /**
      * @brief Retrieves the initial PPM value from Chrony.
      *
-     * @return The PPM value from Chrony, or a fallback value on failure.
+     * @return The PPM value from Chrony, or `std::nullopt` on failure.
      */
-    std::optional<double> getChronyPPM();
+    std::optional<double> get_chrony_ppm();
 
     /**
      * @brief Measures clock drift over a specified duration.
@@ -165,16 +153,16 @@ private:
      * @param seconds The duration in seconds to measure clock drift.
      * @return The calculated PPM drift value.
      */
-    double measureClockDrift(int seconds = clock_drift_interval);
+    double measure_clock_drift(int seconds = clock_drift_interval_);
 
     /**
      * @brief Starts the PPM update loop in a background thread.
      *
      * Ensures that only one instance of the loop runs at a time.
      *
-     * @param interval_seconds The interval in seconds between PPM updates.
+     * @return A PPMStatus indicating success.
      */
-    PPMStatus startPPMUpdateLoop();
+    PPMStatus start_ppm_update_loop();
 
     /**
      * @brief The internal update loop for recalculating PPM.
@@ -182,10 +170,17 @@ private:
      * Runs in a background thread and periodically updates the PPM value.
      *
      * @param interval_seconds The interval in seconds between PPM updates.
-     * @param priority The scheduling priority for the thread.
      * @return A PPMStatus indicating success or a warning if an anomaly is detected.
      */
-    PPMStatus ppmUpdateLoop(int interval_seconds);
+    PPMStatus ppm_update_loop(int interval_seconds);
 };
+
+/**
+ * @brief Global instance of the PPMManager class.
+ *
+ * Responsible for measuring and managing frequency drift (PPM)
+ * using either NTP data or internal estimation methods.
+ */
+extern PPMManager ppmManager;
 
 #endif // PPM_MANAGER_HPP

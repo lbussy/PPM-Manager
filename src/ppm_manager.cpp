@@ -29,6 +29,8 @@
 
 #ifdef DEBUG_PPMMANAGER
 #include <iomanip>
+#include <cerrno>
+#include <cstring>
 #include <ctime>
 #include <iostream>
 #include <sstream>
@@ -36,11 +38,19 @@
 #endif
 
 /**
+ * @brief Global instance of the PPMManager class.
+ *
+ * Responsible for measuring and managing frequency drift (PPM)
+ * using either NTP data or internal estimation methods.
+ */
+PPMManager ppmManager;
+
+/**
  * @brief Constructs a PPMManager instance.
  *
  * Initializes internal values but does not start the update loop.
  */
-PPMManager::PPMManager() : ppm_value(0.0), running(false) {}
+PPMManager::PPMManager() : ppm_value_(0.0), running_(false) {}
 
 /**
  * @brief Initializes the PPMManager.
@@ -58,20 +68,27 @@ PPMStatus PPMManager::initialize()
     }
 
     // Fetch PPM from Chrony
-    std::optional<double> chrony_ppm_opt = getChronyPPM();
+    std::optional<double> chrony_ppm_opt = get_chrony_ppm();
 
     // Check if Chrony is available
     if (!chrony_ppm_opt.has_value())
     {
-        ppm_value = measureClockDrift(clock_drift_interval); // Use system clock fallback
+        ppm_value_.store(measure_clock_drift(clock_drift_interval_)); // Use system clock fallback
         return PPMStatus::ERROR_CHRONY_NOT_FOUND;
     }
 
     // Safely extract the Chrony PPM value
-    ppm_value = *chrony_ppm_opt;
+    ppm_value_.store(*chrony_ppm_opt);
+
+    if (ppm_callback_)
+        ppm_callback_(ppm_value_.load());
+
+#ifdef DEBUG_PPMMANAGER
+    std::cerr << "[DEBUG] :init() initial PPM = " << ppm_value_.load() << " ppm\n";
+#endif
 
     // Start the loop
-    startPPMUpdateLoop();
+    start_ppm_update_loop();
 
     return PPMStatus::SUCCESS;
 }
@@ -85,8 +102,8 @@ PPMStatus PPMManager::initialize()
  */
 void PPMManager::setPPMCallback(std::function<void(double)> callback)
 {
-    std::lock_guard<std::mutex> lock(ppm_mutex);
-    ppm_callback = std::move(callback);
+    std::lock_guard<std::mutex> lock(ppm_mutex_);
+    ppm_callback_ = std::move(callback);
 }
 
 /**
@@ -114,7 +131,7 @@ PPMManager::~PPMManager()
  * @param priority The thread priority value to assign (depends on policy).
  *
  * @return `true` if the scheduling parameters were successfully applied,
- *         `false` otherwise (e.g., thread not running or `pthread_setschedparam()` failed).
+ *         `false` otherwise (e.g., thread not running_ or `pthread_setschedparam()` failed).
  *
  * @note
  * The caller may require elevated privileges (e.g., CAP_SYS_NICE) to apply real-time priorities.
@@ -123,7 +140,7 @@ PPMManager::~PPMManager()
 bool PPMManager::setPriority(int schedPolicy, int priority)
 {
     // Ensure that the worker thread is active and joinable
-    if (!ppm_thread.joinable())
+    if (!ppm_thread_.joinable())
     {
         return false;
     }
@@ -133,7 +150,7 @@ bool PPMManager::setPriority(int schedPolicy, int priority)
     sch_params.sched_priority = priority;
 
     // Attempt to apply the scheduling policy and priority
-    int ret = pthread_setschedparam(ppm_thread.native_handle(), schedPolicy, &sch_params);
+    int ret = pthread_setschedparam(ppm_thread_.native_handle(), schedPolicy, &sch_params);
 
     return (ret == 0);
 }
@@ -169,7 +186,7 @@ bool PPMManager::isTimeSynchronized()
  *
  * @return The PPM value from Chrony, or `-9999.0` on failure.
  */
-std::optional<double> PPMManager::getChronyPPM()
+std::optional<double> PPMManager::get_chrony_ppm()
 {
     FILE *pipe = popen("chronyc tracking | grep 'Frequency' | awk '{print $3}'", "r");
     if (!pipe)
@@ -209,7 +226,7 @@ std::optional<double> PPMManager::getChronyPPM()
  * @param seconds The duration in seconds to measure drift
  * @return The calculated PPM drift value.
  */
-double PPMManager::measureClockDrift(int seconds)
+double PPMManager::measure_clock_drift(int seconds)
 {
     struct timespec start_real, end_real;
     struct timespec start_mono, end_mono;
@@ -220,10 +237,10 @@ double PPMManager::measureClockDrift(int seconds)
     const int check_interval = 1;
     int elapsed_seconds = 0;
 
-    while (running && elapsed_seconds < seconds)
+    while (running_ && elapsed_seconds < seconds)
     {
         std::this_thread::sleep_for(std::chrono::seconds(check_interval));
-        if (!running)
+        if (!running_)
             return 0.0;
         elapsed_seconds += check_interval;
     }
@@ -239,13 +256,13 @@ double PPMManager::measureClockDrift(int seconds)
     double drift_real = ((elapsed_real - expected) / expected) * 1e3;
 
     // Store in history for averaging
-    ppm_history.push_back(drift_real);
-    if (ppm_history.size() > max_history_size)
+    ppm_history_.push_back(drift_real);
+    if (ppm_history_.size() > max_history_size_)
     {
-        ppm_history.pop_front();
+        ppm_history_.pop_front();
     }
 
-    double avg_measured_ppm = std::accumulate(ppm_history.begin(), ppm_history.end(), 0.0) / ppm_history.size();
+    double avg_measured_ppm = std::accumulate(ppm_history_.begin(), ppm_history_.end(), 0.0) / ppm_history_.size();
 
 #ifdef DEBUG_PPMMANAGER
     double elapsed_mono = (end_mono.tv_sec - start_mono.tv_sec) +
@@ -271,23 +288,23 @@ double PPMManager::measureClockDrift(int seconds)
  * @brief The internal update loop for recalculating PPM.
  *
  * Periodically updates the PPM value by averaging Chrony and measured drift values.
- * The loop continues running while `running` is true.
+ * The loop continues running_ while `running_` is true.
  *
  * @param interval_seconds The interval in seconds between PPM updates.
  */
-PPMStatus PPMManager::ppmUpdateLoop(int interval_seconds)
+PPMStatus PPMManager::ppm_update_loop(int interval_seconds)
 {
     const int check_interval = 1;
 
-    while (running)
+    while (running_)
     {
         // Fetch Chrony PPM
-        std::optional<double> chrony_ppm_opt = getChronyPPM();
+        std::optional<double> chrony_ppm_opt = get_chrony_ppm();
         bool chrony_available = chrony_ppm_opt.has_value();
         double chrony_ppm = chrony_available ? *chrony_ppm_opt : 0.0;
 
         // Measure clock drift (use a longer sample interval)
-        double measured_ppm = measureClockDrift(1025); // Use Chrony update interval
+        double measured_ppm = measure_clock_drift(1025); // Use Chrony update interval
 
         // If measured PPM differs by more than 10x from Chrony, discard it
         if (chrony_available && std::abs(measured_ppm - chrony_ppm) > 10.0 * chrony_ppm)
@@ -297,25 +314,25 @@ PPMStatus PPMManager::ppmUpdateLoop(int interval_seconds)
 
         double final_ppm = chrony_available ? chrony_ppm : measured_ppm;
 
-        // Update ppm_value if there's a significant change
+        // Update ppm_value_ if there's a significant change
         {
-            std::lock_guard<std::mutex> lock(ppm_mutex);
-            if (std::abs(final_ppm - ppm_value.load()) > 0.01)
+            std::lock_guard<std::mutex> lock(ppm_mutex_);
+            if (std::abs(final_ppm - ppm_value_.load()) > 0.01)
             {
-                ppm_value = final_ppm;
+                ppm_value_.store(final_ppm);
 
-                ppm_history.push_back(final_ppm);
-                if (ppm_history.size() > max_history_size)
+                ppm_history_.push_back(final_ppm);
+                if (ppm_history_.size() > max_history_size_)
                 {
-                    ppm_history.pop_front();
+                    ppm_history_.pop_front();
                 }
 
-                if (ppm_callback)
+                if (ppm_callback_)
                 {
                     // Capture the callback and value by copy, then detach
-                    std::thread([cb = ppm_callback, val = final_ppm]() {
-                        cb(val);
-                    }).detach();
+                    std::thread([cb = ppm_callback_, val = final_ppm]()
+                                { cb(val); })
+                        .detach();
                 }
             }
         }
@@ -329,10 +346,10 @@ PPMStatus PPMManager::ppmUpdateLoop(int interval_seconds)
                   << " | Final PPM: " << final_ppm << std::endl;
 #endif
 
-        // Sleep for interval_seconds, checking `running` status every second
+        // Sleep for interval_seconds, checking `running_` status every second
         for (int i = 0; i < interval_seconds; i += check_interval)
         {
-            if (!running)
+            if (!running_)
                 return PPMStatus::SUCCESS;
             std::this_thread::sleep_for(std::chrono::seconds(check_interval));
         }
@@ -341,107 +358,35 @@ PPMStatus PPMManager::ppmUpdateLoop(int interval_seconds)
     return PPMStatus::SUCCESS;
 }
 
-std::optional<double> PPMManager::getChronyUpdateInterval()
-{
-    FILE *pipe = popen("chronyc tracking | grep 'Update interval' | awk '{print $4}'", "r");
-    if (!pipe)
-        return std::nullopt;
-
-    char buffer[128];
-    std::string result;
-
-    if (fgets(buffer, sizeof(buffer), pipe) != nullptr)
-    {
-        result = buffer;
-    }
-
-    pclose(pipe);
-
-    try
-    {
-        return std::stod(result);
-    }
-    catch (...)
-    {
-        return std::nullopt;
-    }
-}
-
-double PPMManager::getDriftVariance()
-{
-    if (ppm_history.size() < 2)
-    {
-        return 0.0; // Not enough data
-    }
-
-    double mean = 0.0;
-    for (double ppm : ppm_history)
-    {
-        mean += ppm;
-    }
-    mean /= ppm_history.size();
-
-    double variance = 0.0;
-    for (double ppm : ppm_history)
-    {
-        variance += (ppm - mean) * (ppm - mean);
-    }
-    variance /= ppm_history.size();
-
-    return variance;
-}
-
-double PPMManager::calculateSmoothingFactor(double last_n_variance, double chrony_update_interval)
-{
-    // Adjust smoothing factor based on variance and Chrony update interval
-    double variance_adjustment = std::min(1.0, 1.0 / (1.0 + last_n_variance / 10.0));
-    double update_rate_adjustment = std::min(1.0, 1000.0 / chrony_update_interval);
-
-    return 0.2 * variance_adjustment * update_rate_adjustment; // Base smoothing factor * variance modifier * update frequency modifier
-}
-
-double PPMManager::adjustChronyWeight(double chrony_update_interval)
-{
-    // If Chrony updates quickly (< 600s), prioritize it more
-    if (chrony_update_interval < 600)
-        return 85.0;
-
-    // If Chrony updates slowly (> 1200s), reduce reliance
-    if (chrony_update_interval > 1200)
-        return 65.0;
-
-    // Otherwise, adjust linearly
-    return 75.0 - ((chrony_update_interval - 600) / 600.0) * 10.0;
-}
-
 /**
  * @brief Starts the PPM update loop in a background thread.
  *
  * Ensures that only one instance of the loop runs at a time.
  */
-PPMStatus PPMManager::startPPMUpdateLoop()
+PPMStatus PPMManager::start_ppm_update_loop()
 {
-    if (running)
+    if (running_)
     {
         return PPMStatus::SUCCESS;
     }
-    running = true;
-    ppm_thread = std::thread(&PPMManager::ppmUpdateLoop, this, ppm_update_interval);
+    running_ = true;
+    ppm_thread_ = std::thread(&PPMManager::ppm_update_loop, this, ppm_update_interval_);
 
     // Define the desired scheduling policy and use the provided priority.
     int policy = SCHED_RR; // Round-robin scheduling; alternatives include SCHED_FIFO
     sched_param sch_params;
-    sch_params.sched_priority = ppm_loop_priority; // Use the optional parameter (defaults to 10)
+    sch_params.sched_priority = ppm_loop_priority_; // Use the optional parameter (defaults to 10)
 
     // Set the thread's scheduling policy and priority.
-    int ret = pthread_setschedparam(ppm_thread.native_handle(), policy, &sch_params);
+    int ret = pthread_setschedparam(ppm_thread_.native_handle(), policy, &sch_params);
 
     if (ret != 0)
     {
 #ifdef DEBUG_PPMMANAGER
-        std::cerr << "Failed to set thread priority: " << std::strerror(ret) << std::endl;
+        std::cerr << "Failed to set thread priority: " << ::strerror(ret) << std::endl;
 #endif
-        ;;
+        ;
+        ;
     }
 
     return PPMStatus::SUCCESS;
@@ -454,12 +399,12 @@ PPMStatus PPMManager::startPPMUpdateLoop()
  */
 PPMStatus PPMManager::stop()
 {
-    if (running)
+    if (running_)
     {
-        running = false;
-        if (ppm_thread.joinable())
+        running_ = false;
+        if (ppm_thread_.joinable())
         {
-            ppm_thread.join();
+            ppm_thread_.join();
         }
     }
     return PPMStatus::SUCCESS;
@@ -474,6 +419,9 @@ PPMStatus PPMManager::stop()
  */
 double PPMManager::getCurrentPPM()
 {
-    std::lock_guard<std::mutex> lock(ppm_mutex);
-    return ppm_value;
+    std::lock_guard<std::mutex> lock(ppm_mutex_);
+#ifdef DEBUG_PPMMANAGER
+    std::cout << "[DEBUG] :getCurrentPPM() PPM Value: " << ppm_value_ << std::endl;
+#endif
+    return ppm_value_;
 }
