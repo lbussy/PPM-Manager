@@ -312,7 +312,10 @@ PPMStatus PPMManager::ppmUpdateLoop(int interval_seconds)
 
                 if (ppm_callback)
                 {
-                    ppm_callback(final_ppm);
+                    // Capture the callback and value by copy, then detach
+                    std::thread([cb = ppm_callback, val = final_ppm]() {
+                        cb(val);
+                    }).detach();
                 }
             }
         }
