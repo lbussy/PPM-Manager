@@ -62,7 +62,8 @@ PPMManager::PPMManager() : ppm_value_(0.0), running_(false) {}
  */
 PPMStatus PPMManager::initialize()
 {
-    if (!isTimeSynchronized())
+    // Simple chck to make sure chrony is alive, PPM can update later
+    if (!isChronyAlive())
     {
         return PPMStatus::ERROR_UNSYNCHRONIZED_TIME;
     }
@@ -164,18 +165,46 @@ bool PPMManager::setPriority(int schedPolicy, int priority)
  */
 bool PPMManager::isTimeSynchronized()
 {
-    FILE *pipe = popen("timedatectl show --property=NTPSynchronized --value", "r");
+    // Ask chrony for its sources, silencing any errors
+    FILE *pipe = popen("chronyc sources -n 2>/dev/null", "r");
     if (!pipe)
-        return false;
-
-    char buffer[8];
-    if (fgets(buffer, sizeof(buffer), pipe) == nullptr)
     {
-        pclose(pipe);
         return false;
     }
+
+    char buffer[128];
+    bool synced = false;
+
+    // Read each line; a leading '*' means we have a valid sync source
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    {
+        if (buffer[0] == '*')
+        {
+            synced = true;
+            break;
+        }
+    }
+
     pclose(pipe);
-    return (buffer[0] == 'y'); // 'y' indicates synchronization
+    return synced;
+}
+
+/**
+ * @brief Check if the Chrony daemon is active under systemd.
+ *
+ * Invokes “systemctl is-active --quiet chronyd” and returns true
+ * only if the Chrony service is running. This is the most direct
+ * way to verify that your NTP client is alive when you have systemd.
+ *
+ * @return true if the Chrony service is active; false otherwise.
+ */
+bool PPMManager::isChronyAlive()
+{
+    // This returns 0 if the service is active, non-zero otherwise
+    int ret = std::system("systemctl is-active --quiet chronyd");
+    // On most Linuxes, system() returns the child’s exit status directly,
+    // so zero means “active”.
+    return (ret == 0);
 }
 
 /**

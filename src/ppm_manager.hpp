@@ -115,6 +115,17 @@ public:
     bool isTimeSynchronized();
 
     /**
+     * @brief Check if the Chrony daemon is active under systemd.
+     *
+     * Invokes “systemctl is-active --quiet chronyd” and returns true
+     * only if the Chrony service is running. This is the most direct
+     * way to verify that your NTP client is alive when you have systemd.
+     *
+     * @return true if the Chrony service is active; false otherwise.
+     */
+    bool isChronyAlive();
+
+    /**
      * @brief Registers a callback to be invoked when the PPM value changes.
      *
      * The callback function receives the new PPM value.
